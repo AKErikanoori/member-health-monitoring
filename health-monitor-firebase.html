@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Health Monitor · PT Sugity Creatives</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+
+  <!-- Firebase SDK (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- React -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Plus Jakarta Sans',sans-serif;background:#f8fafc;-webkit-tap-highlight-color:transparent}
+    button{font-family:inherit;transition:opacity .15s,transform .12s}
+    button:active{opacity:.85;transform:scale(.97)}
+    input,select{font-family:inherit}
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-track{background:#f1f5f9}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .animate-in{animation:fadeIn .25s ease}
+    .card-hover{transition:box-shadow .15s,transform .15s}
+    .card-hover:hover{box-shadow:0 6px 24px rgba(0,0,0,.1)!important;transform:translateY(-1px)}
+    @media(min-width:768px){
+      .wide{max-width:920px!important}
+      .param-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:12px!important}
+      .stat-grid{grid-template-columns:repeat(4,1fr)!important}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  // ═══════════════════════════════════════════════════
+  // ⚡ GANTI FIREBASE CONFIG KAMU DI SINI ⚡
+  // Ambil dari: Firebase Console → Project Settings → Your apps
+  // ═══════════════════════════════════════════════════
+  const FIREBASE_CONFIG = {
+    apiKey:            "AIzaSyDEC8EmApdFsSU0slo5kjWBRxO5o1x4ED4",
+    authDomain:        "member-healty-monitoring.firebaseapp.com",
+    projectId:         "member-healty-monitoring",
+    storageBucket:     "member-healty-monitoring.firebasestorage.app",
+    messagingSenderId: "871456288629",
+    appId:             "1:871456288629:web:9d832ddb5833f78a642d3c"
+  };
+  // ═══════════════════════════════════════════════════
+
+  // Init Firebase
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const db = firebase.firestore();
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const DEPTS = [
+  "Produksi","Packing","Polibox","Delivery","Planning",
+  "Quality Control","Engineering","Maintenance","Purchasing",
+  "Logistik","HRD","Finance","General Affairs","IT / Digitalisasi","Manajemen",
+];
+const MONTHS = ["Mei","Jun","Jul"];
+const PARAMS = [
+  {key:"beratBadan",label:"Berat Badan",unit:"kg",ph:"68"},
+  {key:"tensi",label:"Tensi",unit:"mmHg",ph:"120/80"},
+  {key:"gulaDarah",label:"Gula Darah",unit:"mg/dL",ph:"95"},
+  {key:"kolesterol",label:"Kolesterol",unit:"mg/dL",ph:"180"},
+  {key:"asamUrat",label:"Asam Urat",unit:"mg/dL",ph:"5.5"},
+  {key:"bodyFat",label:"Body Fat",unit:"%",ph:"22"},
+  {key:"viseral",label:"Visceral Fat",unit:"lvl",ph:"7"},
+  {key:"bmi",label:"BMI",unit:"",ph:"22.5"},
+  {key:"bodyAge",label:"Body Age",unit:"thn",ph:"32"},
+];
+const STD = {
+  beratBadan:{std:"Ideal",judge:()=>null},
+  tensi:{std:"<120/80",judge:v=>{const[s,d]=(v||"").split("/").map(Number);if(!s||!d)return null;if(s<120&&d<80)return"N";if(s<140&&d<90)return"W";return"X";}},
+  gulaDarah:{std:"<100",judge:v=>{const n=+v;if(!n)return null;return n<100?"N":n<126?"W":"X";}},
+  kolesterol:{std:"<200",judge:v=>{const n=+v;if(!n)return null;return n<200?"N":n<240?"W":"X";}},
+  asamUrat:{std:"L≤7/P≤6",judge:(v,g)=>{const n=+v;if(!n)return null;const l=g==="P"?6:7;return n<=l?"N":n<=l+1?"W":"X";}},
+  bodyFat:{std:"<25%",judge:v=>{const n=+v;if(!n)return null;return n<25?"N":n<30?"W":"X";}},
+  viseral:{std:"≤9",judge:v=>{const n=+v;if(!n)return null;return n<=9?"N":n<=14?"W":"X";}},
+  bmi:{std:"18.5–24.9",judge:v=>{const n=+v;if(!n)return null;return(n>=18.5&&n<25)?"N":n<30?"W":"X";}},
+  bodyAge:{std:"≤Usia",judge:(v,_,u)=>{const n=+v,a=+u;if(!n||!a)return null;return n<=a?"N":n<=a+5?"W":"X";}},
+};
+const JC = {
+  N:{l:"Normal",e:"✅",bg:"#dcfce7",bd:"#4ade80",tx:"#15803d"},
+  W:{l:"Perhatian",e:"⚠️",bg:"#fef9c3",bd:"#facc15",tx:"#92400e"},
+  X:{l:"Bahaya",e:"🚨",bg:"#fee2e2",bd:"#f87171",tx:"#991b1b"},
+  null:{l:"—",e:"",bg:"#f8fafc",bd:"#e2e8f0",tx:"#94a3b8"},
+};
+const DEPT_COLORS=["#3b82f6","#8b5cf6","#ec4899","#f59e0b","#10b981","#06b6d4","#ef4444","#84cc16","#f97316","#6366f1","#14b8a6","#e11d48","#7c3aed","#0ea5e9","#22c55e"];
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const emptyData = () => MONTHS.reduce((a,m)=>({...a,[m]:PARAMS.reduce((b,p)=>({...b,[p.key]:""}),{})}),{});
+const deptColor = d => DEPT_COLORS[DEPTS.indexOf(d)%DEPT_COLORS.length]||"#6b7280";
+const getJudge  = (k,v,g,u) => v?(STD[k]?.judge(v,g,u)||null):null;
+const getWorst  = m => {
+  let w=null;
+  MONTHS.forEach(mo=>PARAMS.forEach(p=>{
+    const j=getJudge(p.key,m.data?.[mo]?.[p.key],m.gender,m.usia);
+    if(j==="X")w="X"; else if(j==="W"&&w!=="X")w="W"; else if(j==="N"&&!w)w="N";
+  }));
+  return w;
+};
+const monthFill = (m,mo) => Math.round(PARAMS.filter(p=>m.data?.[mo]?.[p.key]).length/PARAMS.length*100);
+
+// ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
+const membersCol = () => db.collection("members");
+const configDoc  = () => db.collection("config").doc("pins");
+
+const fbSaveMember = async m => {
+  const {id, ...data} = m;
+  await membersCol().doc(String(id)).set(data);
+};
+const fbDeleteMember = async id => { await membersCol().doc(String(id)).delete(); };
+const fbSaveConfig = async pins => { await configDoc().set(pins); };
+
+// ─── UI COMPONENTS ────────────────────────────────────────────────────────────
+function StatusBadge({j}) {
+  const c=JC[j]||JC[null];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:3,background:c.bg,color:c.tx,border:`1.5px solid ${c.bd}`,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{c.e&&<span>{c.e}</span>}{c.l}</span>;
+}
+
+function Avatar({nama="?",worst,size=44}) {
+  const c=worst?(JC[worst]||JC[null]):JC[null];
+  return <div style={{width:size,height:size,borderRadius:"50%",flexShrink:0,background:`linear-gradient(135deg,${c.bg},${c.bd})`,border:`2.5px solid ${c.bd}`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:size*0.38,color:c.tx}}>{nama[0]?.toUpperCase()||"?"}</div>;
+}
+
+function DeptTag({dept}) {
+  const c=deptColor(dept);
+  return <span style={{background:c+"18",color:c,border:`1.5px solid ${c}40`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700}}>{dept}</span>;
+}
+
+function ProgressRing({pct,size=36}) {
+  const r=(size-6)/2, circ=2*Math.PI*r;
+  const color=pct===100?"#22c55e":pct>0?"#f59e0b":"#e2e8f0";
+  return (
+    <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={3}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={3}
+        strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)} strokeLinecap="round"
+        style={{transition:"stroke-dashoffset .4s"}}/>
+      <text x={size/2} y={size/2+1} textAnchor="middle" dominantBaseline="middle"
+        style={{fill:pct===100?"#16a34a":"#64748b",fontSize:9,fontWeight:700,transform:`rotate(90deg)`,transformOrigin:`${size/2}px ${size/2}px`}}>
+        {pct}%
+      </text>
+    </svg>
+  );
+}
+
+function PinPad({onSubmit, error, label}) {
+  const [p,setP]=useState(["","","",""]);
+  const refs=[useRef(),useRef(),useRef(),useRef()];
+  useEffect(()=>refs[0].current?.focus(),[]);
+  const press=(i,v)=>{
+    if(!/^\d$/.test(v)&&v!=="")return;
+    const n=[...p]; n[i]=v; setP(n);
+    if(v&&i<3)refs[i+1].current?.focus();
+    if(v&&i===3){const f=n.join(""); if(f.length===4)setTimeout(()=>onSubmit(f),80);}
+  };
+  const back=(i,e)=>{if(e.key==="Backspace"&&!p[i]&&i>0)refs[i-1].current?.focus();};
+  return (
+    <div>
+      {label&&<p style={{textAlign:"center",color:"#64748b",fontSize:13,marginBottom:20}}>{label}</p>}
+      <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:14}}>
+        {p.map((v,i)=>(
+          <input key={i} ref={refs[i]} type="password" inputMode="numeric" maxLength={1} value={v}
+            onChange={e=>press(i,e.target.value)} onKeyDown={e=>back(i,e)}
+            style={{width:58,height:68,textAlign:"center",fontSize:30,fontWeight:900,fontFamily:"monospace",
+              border:error?"2px solid #ef4444":`2px solid ${v?"#10b981":"#e2e8f0"}`,
+              borderRadius:16,background:v?"#ecfdf5":"#fff",color:"#064e3b",
+              outline:"none",boxShadow:v?"0 4px 14px rgba(16,185,129,.25)":"0 1px 4px rgba(0,0,0,.06)",
+              transition:"all .15s"}}/>
+        ))}
+      </div>
+      {error&&<div style={{textAlign:"center",color:"#dc2626",fontSize:13,fontWeight:600,background:"#fee2e2",borderRadius:10,padding:"10px 16px"}}>❌ PIN salah, coba lagi</div>}
+    </div>
+  );
+}
+
+// ─── SCREENS ─────────────────────────────────────────────────────────────────
+
+function HomeScreen({onRole}) {
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#064e3b 0%,#065f46 40%,#047857 70%,#059669 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{textAlign:"center",marginBottom:44}} className="animate-in">
+        <div style={{fontSize:76,marginBottom:14,animation:"float 3s ease-in-out infinite"}}>🏥</div>
+        <h1 style={{color:"#fff",fontSize:30,fontWeight:900,margin:0,letterSpacing:-1}}>Health Monitor</h1>
+        <p style={{color:"#6ee7b7",fontSize:14,margin:"8px 0 0",fontWeight:500}}>PT Sugity Creatives</p>
+      </div>
+      <div style={{width:"100%",maxWidth:380,display:"flex",flexDirection:"column",gap:14}} className="animate-in">
+        <button onClick={()=>onRole("admin")}
+          style={{background:"#fff",border:"none",borderRadius:22,padding:"22px 24px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,boxShadow:"0 8px 32px rgba(0,0,0,.25)",textAlign:"left",width:"100%"}}>
+          <div style={{width:54,height:54,borderRadius:16,background:"linear-gradient(135deg,#065f46,#059669)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>💉</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:16,color:"#1e3a2f"}}>Admin — Suster</div>
+            <div style={{fontSize:12,color:"#6b7280",marginTop:3}}>Input & kelola data kesehatan</div>
+          </div>
+          <span style={{fontSize:22,color:"#059669"}}>›</span>
+        </button>
+        <button onClick={()=>onRole("viewer")}
+          style={{background:"rgba(255,255,255,.12)",backdropFilter:"blur(10px)",border:"1.5px solid rgba(255,255,255,.25)",borderRadius:22,padding:"22px 24px",cursor:"pointer",display:"flex",alignItems:"center",gap:16,textAlign:"left",width:"100%"}}>
+          <div style={{width:54,height:54,borderRadius:16,background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>📊</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>Viewer — Management</div>
+            <div style={{fontSize:12,color:"#a7f3d0",marginTop:3}}>Lihat laporan & status kesehatan</div>
+          </div>
+          <span style={{fontSize:22,color:"#6ee7b7"}}>›</span>
+        </button>
+      </div>
+      <p style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:36}}>🔴 Live · Real-time Database</p>
+    </div>
+  );
+}
+
+function PinScreen({role,onSuccess,onBack}) {
+  const [err,setErr]=useState(false);
+  return (
+    <div style={{minHeight:"100vh",background:"#f8fafc",display:"flex",flexDirection:"column"}}>
+      <div style={{background:role==="admin"?"linear-gradient(135deg,#064e3b,#059669)":"linear-gradient(135deg,#1e3a5f,#2563eb)",padding:"20px 24px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:28,cursor:"pointer",padding:0,opacity:.8}}>‹</button>
+        <div>
+          <div style={{color:"#fff",fontWeight:800,fontSize:17}}>{role==="admin"?"Admin — Suster":"Viewer — Management"}</div>
+          <div style={{color:"rgba(255,255,255,.7)",fontSize:11}}>Masukkan PIN untuk melanjutkan</div>
+        </div>
+      </div>
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:380}}>
+          <div style={{background:"#fff",borderRadius:24,padding:"40px 28px",boxShadow:"0 4px 24px rgba(0,0,0,.08)",border:"1px solid #e2e8f0"}} className="animate-in">
+            <div style={{textAlign:"center",marginBottom:28}}>
+              <div style={{fontSize:56,marginBottom:14}}>{role==="admin"?"💉":"📊"}</div>
+              <h2 style={{fontWeight:900,fontSize:22,color:"#1e3a2f",margin:0}}>PIN {role==="admin"?"Admin":"Viewer"}</h2>
+            </div>
+            <PinPad label={role==="admin"?"PIN khusus Suster":"PIN khusus Management"} onSubmit={onSuccess} error={err}/>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SetupScreen({onSave}) {
+  const [aPin,setAPin]=useState(""); const [vPin,setVPin]=useState(""); const [err,setErr]=useState(""); const [loading,setLoading]=useState(false);
+  const submit=async()=>{
+    if(aPin.length!==4||!/^\d{4}$/.test(aPin))return setErr("PIN Admin harus 4 digit angka");
+    if(vPin.length!==4||!/^\d{4}$/.test(vPin))return setErr("PIN Viewer harus 4 digit angka");
+    if(aPin===vPin)return setErr("PIN Admin dan Viewer harus berbeda");
+    setLoading(true);
+    try{ await fbSaveConfig({admin:aPin,viewer:vPin}); onSave({admin:aPin,viewer:vPin}); }
+    catch(e){ setErr("Gagal menyimpan: "+e.message); setLoading(false); }
+  };
+  const inp={width:"100%",padding:"14px",borderRadius:12,border:"1.5px solid #e2e8f0",fontSize:24,fontFamily:"monospace",fontWeight:700,textAlign:"center",outline:"none",background:"#f8fafc",color:"#1e3a2f",letterSpacing:10};
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#064e3b,#047857)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:400,background:"#fff",borderRadius:24,padding:"40px 28px",boxShadow:"0 20px 60px rgba(0,0,0,.3)"}} className="animate-in">
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:52,marginBottom:12}}>⚙️</div>
+          <h2 style={{fontWeight:900,fontSize:22,color:"#1e3a2f",margin:0}}>Setup Pertama</h2>
+          <p style={{color:"#64748b",fontSize:13,margin:"8px 0 0",lineHeight:1.6}}>Buat PIN untuk Admin &amp; Viewer.<br/>Lakukan ini hanya sekali.</p>
+        </div>
+        {[["💉 PIN Admin (Suster)",aPin,setAPin],["📊 PIN Viewer (Management)",vPin,setVPin]].map(([lbl,val,set],i)=>(
+          <div key={i} style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:700,color:"#065f46",marginBottom:6,display:"block"}}>{lbl}</label>
+            <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={val} onChange={e=>set(e.target.value.replace(/\D/g,""))}/>
+          </div>
+        ))}
+        {err&&<div style={{color:"#dc2626",fontSize:13,fontWeight:600,background:"#fee2e2",borderRadius:10,padding:"10px 14px",marginBottom:16}}>⚠️ {err}</div>}
+        <button onClick={submit} disabled={loading}
+          style={{width:"100%",background:loading?"#94a3b8":"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",borderRadius:14,padding:"15px",fontSize:15,fontWeight:800,cursor:loading?"wait":"pointer"}}>
+          {loading?"⏳ Menyimpan…":"Simpan & Mulai →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({members, isAdmin, onAdd, onSelect, onLogout, saving}) {
+  const [search,setSearch]=useState(""); const [filterDept,setFilterDept]=useState("Semua"); const [filterStatus,setFilterStatus]=useState("Semua");
+  const counts=members.reduce((a,m)=>{const w=getWorst(m)||"null";a[w]=(a[w]||0)+1;return a},{});
+  const usedDepts=[...new Set(members.map(m=>m.bagian))].filter(Boolean).sort();
+  const filtered=members.filter(m=>{
+    if(filterDept!=="Semua"&&m.bagian!==filterDept)return false;
+    if(filterStatus!=="Semua"&&getWorst(m)!==filterStatus)return false;
+    return m.nama.toLowerCase().includes(search.toLowerCase())||m.bagian.toLowerCase().includes(search.toLowerCase());
+  });
+  const hdr = isAdmin?"linear-gradient(135deg,#064e3b,#059669)":"linear-gradient(135deg,#1e3a5f,#2563eb)";
+  const icon = isAdmin?"💉":"📊";
+  const role = isAdmin?"Admin · Suster":"Viewer · Management";
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f8fafc"}}>
+      <div style={{background:hdr,padding:"16px 20px",position:"sticky",top:0,zIndex:10,boxShadow:"0 2px 12px rgba(0,0,0,.15)"}}>
+        <div className="wide" style={{display:"flex",alignItems:"center",justifyContent:"space-between",maxWidth:920,margin:"0 auto"}}>
+          <div>
+            <div style={{color:"#fff",fontWeight:900,fontSize:18}}>{icon} Health Monitor</div>
+            <div style={{color:"rgba(255,255,255,.7)",fontSize:11,marginTop:1}}>{role} {saving?"· 🔄 Menyimpan…":"· 🟢 Live"}</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {isAdmin&&<button onClick={onAdd} style={{background:"#fff",color:isAdmin?"#059669":"#2563eb",border:"none",borderRadius:12,padding:"8px 16px",fontWeight:800,fontSize:13,cursor:"pointer"}}>+ Tambah</button>}
+            <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"1.5px solid rgba(255,255,255,.3)",borderRadius:12,padding:"8px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}>Keluar</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="wide" style={{padding:"20px 16px",maxWidth:920,margin:"0 auto"}}>
+        {/* Stats */}
+        <div className="stat-grid" style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:18}}>
+          {[{n:members.length,l:"Total Member",bg:"#f0fdf4",c:"#059669",e:"👥"},{n:counts["N"]||0,l:"Normal",bg:"#dcfce7",c:"#16a34a",e:"✅"},{n:counts["W"]||0,l:"Perhatian",bg:"#fef9c3",c:"#a16207",e:"⚠️"},{n:counts["X"]||0,l:"Bahaya",bg:"#fee2e2",c:"#dc2626",e:"🚨"}].map((s,i)=>(
+            <div key={i} style={{background:s.bg,borderRadius:18,padding:"16px 12px",textAlign:"center",border:`1.5px solid ${s.c}25`}}>
+              <div style={{fontSize:22,marginBottom:4}}>{s.e}</div>
+              <div style={{fontSize:28,fontWeight:900,color:s.c,lineHeight:1}}>{s.n}</div>
+              <div style={{fontSize:11,color:"#6b7280",marginTop:4,fontWeight:600}}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filters */}
+        <div style={{background:"#fff",borderRadius:16,padding:14,marginBottom:14,border:"1px solid #e2e8f0",display:"flex",flexWrap:"wrap",gap:8}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍  Cari nama atau bagian..."
+            style={{flex:"1 1 200px",padding:"10px 14px",borderRadius:10,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none",background:"#f8fafc"}}/>
+          <select value={filterDept} onChange={e=>setFilterDept(e.target.value)}
+            style={{flex:"1 1 140px",padding:"10px 12px",borderRadius:10,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none",background:"#f8fafc"}}>
+            <option>Semua</option>{usedDepts.map(d=><option key={d}>{d}</option>)}
+          </select>
+          <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+            style={{flex:"1 1 120px",padding:"10px 12px",borderRadius:10,border:"1.5px solid #e2e8f0",fontSize:13,outline:"none",background:"#f8fafc"}}>
+            <option>Semua</option><option value="N">✅ Normal</option><option value="W">⚠️ Perhatian</option><option value="X">🚨 Bahaya</option>
+          </select>
+        </div>
+
+        {/* Member List */}
+        <div style={{background:"#fff",borderRadius:18,border:"1px solid #e2e8f0",overflow:"hidden"}}>
+          <div style={{padding:"14px 20px",borderBottom:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontWeight:800,fontSize:14,color:"#1e3a2f"}}>Daftar Member</span>
+            <span style={{fontSize:12,color:"#6b7280"}}>{filtered.length}/{members.length}</span>
+          </div>
+          {filtered.length===0&&<div style={{textAlign:"center",padding:"48px 24px",color:"#94a3b8"}}><div style={{fontSize:40,marginBottom:8}}>🔍</div><div style={{fontSize:14}}>{members.length===0?"Belum ada member":"Tidak ditemukan"}</div></div>}
+          {filtered.map((m,i)=>{
+            const w=getWorst(m);
+            return (
+              <div key={m.id} className="card-hover" onClick={()=>onSelect(m)}
+                style={{display:"flex",alignItems:"center",gap:14,padding:"14px 20px",borderBottom:i<filtered.length-1?"1px solid #f8fafc":"none",cursor:"pointer",background:"#fff",transition:"all .15s"}}>
+                <Avatar nama={m.nama} worst={w} size={48}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:"#1e3a2f",marginBottom:4}}>{m.nama}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <DeptTag dept={m.bagian}/><span style={{fontSize:11,color:"#94a3b8"}}>{m.usia} thn · {m.gender}</span>
+                  </div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                  <StatusBadge j={w}/>
+                  <div style={{display:"flex",gap:4}}>{MONTHS.map(mo=><ProgressRing key={mo} pct={monthFill(m,mo)} size={30}/>)}</div>
+                </div>
+                <span style={{color:"#cbd5e1",fontSize:20,marginLeft:4}}>›</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddMemberScreen({onSave, onBack}) {
+  const [form,setForm]=useState({nama:"",bagian:"",usia:"",gender:"L"});
+  const [err,setErr]=useState(""); const [loading,setLoading]=useState(false);
+  const F=(k,v)=>setForm(p=>({...p,[k]:v}));
+  const submit=async()=>{
+    if(!form.nama.trim())return setErr("Nama wajib diisi");
+    if(!form.bagian)return setErr("Pilih bagian");
+    setLoading(true);
+    try{ await onSave({...form,nama:form.nama.trim(),id:Date.now(),data:emptyData()}); }
+    catch(e){ setErr("Gagal: "+e.message); setLoading(false); }
+  };
+  const inp={width:"100%",padding:"12px 14px",borderRadius:12,border:"1.5px solid #e2e8f0",fontSize:14,outline:"none",background:"#f8fafc",color:"#1e3a2f"};
+  const lbl={fontSize:12,fontWeight:700,color:"#065f46",marginBottom:6,display:"block"};
+  return (
+    <div style={{minHeight:"100vh",background:"#f8fafc"}}>
+      <div style={{background:"linear-gradient(135deg,#064e3b,#059669)",padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:28,cursor:"pointer",padding:0,opacity:.8}}>‹</button>
+        <div style={{color:"#fff",fontWeight:800,fontSize:17}}>Tambah Member Baru</div>
+      </div>
+      <div style={{padding:"24px 16px",maxWidth:520,margin:"0 auto"}}>
+        <div style={{background:"#fff",borderRadius:20,padding:"24px",border:"1px solid #e2e8f0",boxShadow:"0 2px 12px rgba(0,0,0,.05)"}} className="animate-in">
+          <div style={{marginBottom:14}}><label style={lbl}>Nama Lengkap *</label><input style={inp} placeholder="e.g. Budi Santoso" value={form.nama} onChange={e=>F("nama",e.target.value)}/></div>
+          <div style={{marginBottom:14}}><label style={lbl}>Bagian / Departemen *</label>
+            <select style={{...inp,appearance:"auto"}} value={form.bagian} onChange={e=>F("bagian",e.target.value)}>
+              <option value="">Pilih bagian…</option>{DEPTS.map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:12,marginBottom:20}}>
+            <div style={{flex:1}}><label style={lbl}>Usia (thn)</label><input style={inp} type="number" placeholder="35" value={form.usia} onChange={e=>F("usia",e.target.value)}/></div>
+            <div style={{flex:1}}><label style={lbl}>Gender</label>
+              <select style={{...inp,appearance:"auto"}} value={form.gender} onChange={e=>F("gender",e.target.value)}>
+                <option value="L">Laki-laki (L)</option><option value="P">Perempuan (P)</option>
+              </select>
+            </div>
+          </div>
+          {err&&<div style={{color:"#dc2626",fontSize:13,fontWeight:600,background:"#fee2e2",borderRadius:10,padding:"10px 14px",marginBottom:14}}>⚠️ {err}</div>}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={onBack} style={{flex:1,background:"#f8fafc",color:"#64748b",border:"1.5px solid #e2e8f0",borderRadius:14,padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Batal</button>
+            <button onClick={submit} disabled={loading} style={{flex:2,background:loading?"#94a3b8":"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",borderRadius:14,padding:"12px",fontSize:14,fontWeight:800,cursor:loading?"wait":"pointer"}}>
+              {loading?"⏳ Menyimpan…":"✅ Simpan Member"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MemberFormScreen({member, onSave, onDelete, onBack, isViewer}) {
+  const [data,setData]=useState(JSON.parse(JSON.stringify(member.data||emptyData())));
+  const [mo,setMo]=useState(MONTHS[0]);
+  const [saved,setSaved]=useState(false); const [saving,setSaving]=useState(false);
+
+  const handleSave=async()=>{
+    setSaving(true);
+    try{ await onSave({...member,data}); setSaved(true); setTimeout(()=>setSaved(false),2500); }
+    catch{}
+    setSaving(false);
+  };
+  const set=(p,v)=>setData(prev=>({...prev,[mo]:{...prev[mo],[p]:v}}));
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f8fafc"}}>
+      <style>{`.param-grid{display:flex;flex-direction:column;gap:12px}`}</style>
+      <div style={{background:isViewer?"linear-gradient(135deg,#1e3a5f,#2563eb)":"linear-gradient(135deg,#064e3b,#059669)",padding:"16px 20px",position:"sticky",top:0,zIndex:10}}>
+        <div className="wide" style={{display:"flex",alignItems:"center",gap:12,maxWidth:920,margin:"0 auto"}}>
+          <button onClick={onBack} style={{background:"none",border:"none",color:"#fff",fontSize:28,cursor:"pointer",padding:0,opacity:.8}}>‹</button>
+          <Avatar nama={member.nama} worst={getWorst(member)} size={42}/>
+          <div style={{flex:1}}>
+            <div style={{color:"#fff",fontWeight:800,fontSize:16}}>{member.nama}</div>
+            <div style={{color:"rgba(255,255,255,.7)",fontSize:11,marginTop:1}}>{member.bagian} · {member.usia} thn · {member.gender}</div>
+          </div>
+          {saving&&<div style={{background:"rgba(255,255,255,.2)",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700}}>🔄 Saving…</div>}
+          {saved&&!saving&&<div style={{background:"#6ee7b7",color:"#064e3b",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700}}>✅ Tersimpan!</div>}
+          {isViewer&&<div style={{background:"rgba(255,255,255,.15)",color:"#fff",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700}}>👁 Read Only</div>}
+        </div>
+      </div>
+
+      <div className="wide" style={{padding:"16px",maxWidth:920,margin:"0 auto"}}>
+        {/* Month Tabs */}
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          {MONTHS.map(m=>(
+            <button key={m} onClick={()=>setMo(m)} style={{flex:1,padding:"11px 0",borderRadius:14,fontWeight:800,fontSize:14,cursor:"pointer",
+              border:mo===m?"none":"2px solid #e2e8f0",
+              background:mo===m?(isViewer?"linear-gradient(135deg,#1e3a5f,#2563eb)":"linear-gradient(135deg,#059669,#047857)"):"#fff",
+              color:mo===m?"#fff":"#6b7280",boxShadow:mo===m?"0 4px 14px rgba(0,0,0,.2)":"none",transition:"all .2s"}}>
+              {m}
+              <div style={{fontSize:9,opacity:.8,marginTop:2}}>{monthFill(member,m)}% diisi</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Params */}
+        <div style={{background:"#fff",borderRadius:20,border:"1px solid #e2e8f0",overflow:"hidden",marginBottom:14}}>
+          <div style={{padding:"14px 20px",borderBottom:"1px solid #f1f5f9",fontWeight:800,fontSize:13,color:"#065f46",textTransform:"uppercase",letterSpacing:.5}}>
+            Hasil Pemeriksaan — {mo}
+          </div>
+          <div className="param-grid" style={{padding:16}}>
+            {PARAMS.map(p=>{
+              const val=data[mo]?.[p.key]||"";
+              const j=getJudge(p.key,val,member.gender,member.usia);
+              const jc=JC[j]||JC[null];
+              return (
+                <div key={p.key} style={{background:val?jc.bg+"80":"#f8fafc",borderRadius:14,padding:"12px 14px",
+                  border:`1.5px solid ${val?jc.bd:"#e2e8f0"}`,transition:"all .2s"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <label style={{fontWeight:700,fontSize:13,color:"#1e3a2f"}}>
+                      {p.label} {p.unit&&<span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>({p.unit})</span>}
+                    </label>
+                    {val&&<StatusBadge j={j}/>}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <input style={{flex:1,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${val?jc.bd:"#e2e8f0"}`,
+                      background:val?jc.bg:"#fff",color:"#1e3a2f",outline:"none",fontSize:15,fontFamily:"monospace",fontWeight:700}}
+                      placeholder={p.ph} value={val} disabled={isViewer}
+                      onChange={e=>set(p.key,e.target.value)}/>
+                    <span style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap",flexShrink:0}}>Std: {STD[p.key].std}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Summary */}
+        <div style={{background:"#fff",borderRadius:20,border:"1px solid #e2e8f0",overflow:"hidden",marginBottom:14}}>
+          <div style={{padding:"14px 20px",borderBottom:"1px solid #f1f5f9",fontWeight:800,fontSize:13,color:"#065f46",textTransform:"uppercase",letterSpacing:.5}}>Rekap 3 Bulan</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{background:"#f8fafc"}}>
+                <th style={{textAlign:"left",padding:"8px 16px",color:"#6b7280",fontWeight:700,borderBottom:"1px solid #f1f5f9",whiteSpace:"nowrap"}}>Parameter</th>
+                {MONTHS.map(m=><th key={m} colSpan={2} style={{textAlign:"center",padding:"8px",color:"#6b7280",fontWeight:700,borderBottom:"1px solid #f1f5f9"}}>{m}</th>)}
+              </tr></thead>
+              <tbody>
+                {PARAMS.map((p,pi)=>(
+                  <tr key={p.key} style={{background:pi%2===0?"#fff":"#f8fafc"}}>
+                    <td style={{padding:"7px 16px",fontWeight:600,color:"#374151",whiteSpace:"nowrap"}}>{p.label}</td>
+                    {MONTHS.map(m=>{
+                      const v=data[m]?.[p.key]||"";
+                      const j=getJudge(p.key,v,member.gender,member.usia);
+                      const jc=JC[j]||JC[null];
+                      return [
+                        <td key={m+"v"} style={{textAlign:"center",padding:"7px 4px",fontWeight:700,color:v?jc.tx:"#cbd5e1"}}>{v||"—"}</td>,
+                        <td key={m+"j"} style={{textAlign:"center",padding:"6px 8px"}}>{v&&<StatusBadge j={j}/>}</td>
+                      ];
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {!isViewer&&(
+          <div style={{display:"flex",gap:10,paddingBottom:32}}>
+            <button onClick={()=>onDelete(member.id)} style={{flex:1,background:"#fff",color:"#dc2626",border:"1.5px solid #fca5a5",borderRadius:14,padding:"13px",fontSize:14,fontWeight:700,cursor:"pointer"}}>🗑 Hapus</button>
+            <button onClick={handleSave} disabled={saving}
+              style={{flex:2,background:saving?"#94a3b8":"linear-gradient(135deg,#059669,#047857)",color:"#fff",border:"none",borderRadius:14,padding:"13px",fontSize:14,fontWeight:800,cursor:saving?"wait":"pointer"}}>
+              {saving?"🔄 Menyimpan…":"💾 Simpan Data "+mo}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+function App() {
+  const [members,setMembers]=useState([]);
+  const [config,setConfig]=useState(null);
+  const [screen,setScreen]=useState("loading");
+  const [role,setRole]=useState(null);
+  const [pinErr,setPinErr]=useState(false);
+  const [selected,setSelected]=useState(null);
+  const [saving,setSaving]=useState(false);
+
+  // Load config from Firestore, then subscribe to members
+  useEffect(()=>{
+    let unsubMembers=null;
+    configDoc().get().then(snap=>{
+      if(snap.exists){
+        setConfig(snap.data());
+        setScreen("home");
+        // Real-time members listener
+        unsubMembers = membersCol().orderBy("nama").onSnapshot(snap=>{
+          setMembers(snap.docs.map(d=>({id:d.id,...d.data()})));
+        }, err=>console.error(err));
+      } else {
+        setScreen("setup");
+      }
+    }).catch(e=>{
+      console.error("Firebase error:", e);
+      setScreen("setup");
+    });
+    return ()=>{ if(unsubMembers)unsubMembers(); };
+  },[]);
+
+  const handlePin=pin=>{
+    if(role==="admin"&&pin===config.admin){setPinErr(false);setScreen("admin");}
+    else if(role==="viewer"&&pin===config.viewer){setPinErr(false);setScreen("viewer");}
+    else setPinErr(true);
+  };
+
+  const handleSaveMember=async m=>{
+    setSaving(true);
+    try{ await fbSaveMember(m); if(selected?.id===m.id)setSelected(m); }catch(e){alert("Gagal menyimpan: "+e.message);}
+    setSaving(false);
+  };
+  const handleDeleteMember=async id=>{
+    if(!confirm("Hapus member ini?"))return;
+    setSaving(true);
+    try{ await fbDeleteMember(id); setSelected(null); setScreen("admin"); }catch(e){alert("Gagal hapus: "+e.message);}
+    setSaving(false);
+  };
+  const handleAddMember=async m=>{
+    await handleSaveMember(m); setScreen("admin");
+  };
+  const handleSetup=async pins=>{
+    try{ await fbSaveConfig(pins); setConfig(pins); setScreen("home");
+      // Start members listener after setup
+      membersCol().orderBy("nama").onSnapshot(snap=>{
+        setMembers(snap.docs.map(d=>({id:d.id,...d.data()})));
+      });
+    }catch(e){alert("Firebase error: "+e.message);}
+  };
+
+  if(screen==="loading") return (
+    <div style={{minHeight:"100vh",background:"#064e3b",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{fontSize:48}}>🏥</div>
+      <div style={{color:"#6ee7b7",fontSize:16,fontWeight:700}}>Menghubungkan ke database…</div>
+      <div style={{width:40,height:40,border:"4px solid rgba(110,231,183,.3)",borderTop:"4px solid #6ee7b7",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+    </div>
+  );
+
+  if(screen==="setup") return <SetupScreen onSave={handleSetup}/>;
+  if(screen==="home") return <HomeScreen onRole={r=>{setRole(r);setPinErr(false);setScreen("pin");}}/>;
+  if(screen==="pin") return <PinScreen role={role} onSuccess={handlePin} onBack={()=>setScreen("home")} error={pinErr}/>;
+  if(screen==="admin") return <Dashboard members={members} isAdmin saving={saving} onAdd={()=>setScreen("add")} onSelect={m=>{setSelected(m);setScreen("member-form");}} onLogout={()=>setScreen("home")}/>;
+  if(screen==="add") return <AddMemberScreen onSave={handleAddMember} onBack={()=>setScreen("admin")}/>;
+  if(screen==="member-form"&&selected) return <MemberFormScreen member={selected} onSave={handleSaveMember} onDelete={handleDeleteMember} onBack={()=>setScreen("admin")}/>;
+  if(screen==="viewer") return <Dashboard members={members} isAdmin={false} saving={false} onAdd={()=>{}} onSelect={m=>{setSelected(m);setScreen("viewer-detail");}} onLogout={()=>setScreen("home")}/>;
+  if(screen==="viewer-detail"&&selected) return <MemberFormScreen member={selected} onSave={()=>{}} onDelete={()=>{}} onBack={()=>setScreen("viewer")} isViewer/>;
+  return null;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
